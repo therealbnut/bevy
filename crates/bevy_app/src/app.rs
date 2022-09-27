@@ -28,6 +28,7 @@ bevy_utils::define_label!(
 #[derive(Resource, Clone, Deref, DerefMut, Default)]
 pub struct AppTypeRegistry(pub bevy_reflect::TypeRegistryArc);
 
+#[must_use]
 #[allow(clippy::needless_doctest_main)]
 /// A container of app logic and data.
 ///
