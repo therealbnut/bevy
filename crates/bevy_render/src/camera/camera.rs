@@ -22,7 +22,7 @@ use bevy_ecs::{
 };
 use bevy_log::warn;
 use bevy_math::{
-    primitives::Direction3d, vec2, Mat4, Ray3d, Rect, URect, UVec2, UVec4, Vec2, Vec3,
+    primitives::Direction3d, vec2, Mat4, Ray3d, Rect, URect, UVec2, UVec4, Vec2, Vec3, Vec4,
 };
 use bevy_reflect::prelude::*;
 use bevy_render_macros::ExtractComponent;
@@ -318,6 +318,27 @@ impl Camera {
         self.computed.projection_matrix
     }
 
+    /// A matrix to compute the Normalized Device Coordinates from a position on this [`Camera`]'s viewport.
+    /// See `Camera::logical_viewport_size` for when this might return `None`.
+    pub fn viewport_to_ndc_matrix(&self) -> Option<Mat4> {
+        let target_size = self.logical_viewport_size()?;
+        let mut vp_to_ndc = Mat4::from_scale((Vec2::new(2.0, -2.0) / target_size).extend(1.));
+        vp_to_ndc.w_axis = Vec4::new(-1.0, 1.0, 0.0, 1.0);
+        Some(vp_to_ndc)
+    }
+
+    /// A matrix to compute a world position from a Normalized Device Coordinates.
+    #[inline]
+    pub fn ndc_to_world_matrix(&self, camera_transform: &GlobalTransform) -> Mat4 {
+        camera_transform.compute_matrix() * self.projection_matrix().inverse()
+    }
+
+    /// A matrix to project a viewport-space coordinate into world-space.
+    // See `Camera::logical_viewport_size` for when this might return `None`.
+    pub fn viewport_to_world_matrix(&self, camera_transform: &GlobalTransform) -> Option<Mat4> {
+        Some(self.ndc_to_world_matrix(camera_transform) * self.viewport_to_ndc_matrix()?)
+    }
+
     /// Given a position in world space, use the camera to compute the viewport-space coordinates.
     ///
     /// To get the coordinates in Normalized Device Coordinates, you should use
@@ -364,18 +385,12 @@ impl Camera {
     pub fn viewport_to_world(
         &self,
         camera_transform: &GlobalTransform,
-        mut viewport_position: Vec2,
+        viewport_position: Vec2,
     ) -> Option<Ray3d> {
-        let target_size = self.logical_viewport_size()?;
-        // Flip the Y co-ordinate origin from the top to the bottom.
-        viewport_position.y = target_size.y - viewport_position.y;
-        let ndc = viewport_position * 2. / target_size - Vec2::ONE;
-
-        let ndc_to_world =
-            camera_transform.compute_matrix() * self.computed.projection_matrix.inverse();
-        let world_near_plane = ndc_to_world.project_point3(ndc.extend(1.));
+        let vp_to_world = self.viewport_to_world_matrix(camera_transform)?;
+        let world_near_plane = vp_to_world.project_point3(viewport_position.extend(1.));
         // Using EPSILON because an ndc with Z = 0 returns NaNs.
-        let world_far_plane = ndc_to_world.project_point3(ndc.extend(f32::EPSILON));
+        let world_far_plane = vp_to_world.project_point3(viewport_position.extend(f32::EPSILON));
 
         // The fallible direction constructor ensures that world_near_plane and world_far_plane aren't NaN.
         Direction3d::new(world_far_plane - world_near_plane).map_or(None, |direction| {
@@ -400,16 +415,11 @@ impl Camera {
     pub fn viewport_to_world_2d(
         &self,
         camera_transform: &GlobalTransform,
-        mut viewport_position: Vec2,
+        viewport_position: Vec2,
     ) -> Option<Vec2> {
-        let target_size = self.logical_viewport_size()?;
-        // Flip the Y co-ordinate origin from the top to the bottom.
-        viewport_position.y = target_size.y - viewport_position.y;
-        let ndc = viewport_position * 2. / target_size - Vec2::ONE;
-
-        let world_near_plane = self.ndc_to_world(camera_transform, ndc.extend(1.))?;
-
-        Some(world_near_plane.truncate())
+        let vp_to_world = self.viewport_to_world_matrix(camera_transform)?;
+        let world_near_plane = vp_to_world.project_point3(viewport_position.extend(1.));
+        (!world_near_plane.is_nan()).then_some(world_near_plane.truncate())
     }
 
     /// Given a position in world space, use the camera's viewport to compute the Normalized Device Coordinates.
@@ -427,8 +437,7 @@ impl Camera {
         world_position: Vec3,
     ) -> Option<Vec3> {
         // Build a transformation matrix to convert from world space to NDC using camera data
-        let world_to_ndc: Mat4 =
-            self.computed.projection_matrix * camera_transform.compute_matrix().inverse();
+        let world_to_ndc = self.ndc_to_world_matrix(camera_transform);
         let ndc_space_coords: Vec3 = world_to_ndc.project_point3(world_position);
 
         (!ndc_space_coords.is_nan()).then_some(ndc_space_coords)
@@ -446,8 +455,7 @@ impl Camera {
     /// Panics if the projection matrix is null and `glam_assert` is enabled.
     pub fn ndc_to_world(&self, camera_transform: &GlobalTransform, ndc: Vec3) -> Option<Vec3> {
         // Build a transformation matrix to convert from NDC to world space using camera data
-        let ndc_to_world =
-            camera_transform.compute_matrix() * self.computed.projection_matrix.inverse();
+        let ndc_to_world = self.ndc_to_world_matrix(camera_transform);
 
         let world_space_coords = ndc_to_world.project_point3(ndc);
 
