@@ -587,3 +587,15 @@ impl SubApps {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ensure_subapp_is_sync_and_send() {
+        let that = SubApp::new();
+        fn is_sync_send(_: impl Sync + Send) {}
+        is_sync_send(that);
+    }
+}
