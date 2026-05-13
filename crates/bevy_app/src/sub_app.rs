@@ -10,7 +10,10 @@ use bevy_ecs::{
     },
     system::{ScheduleSystem, SystemId, SystemInput},
 };
-use bevy_platform::collections::{HashMap, HashSet};
+use bevy_platform::{
+    cell::SyncCell,
+    collections::{HashMap, HashSet},
+};
 use core::fmt::Debug;
 
 #[cfg(feature = "trace")]
@@ -77,7 +80,7 @@ pub struct SubApp {
     pub update_schedule: Option<InternedScheduleLabel>,
     /// A function that gives mutable access to two app worlds. This is primarily
     /// intended for copying data from the main world to secondary worlds.
-    extract: Option<ExtractFn>,
+    extract: SyncCell<Option<ExtractFn>>,
 }
 
 impl Debug for SubApp {
@@ -97,7 +100,7 @@ impl Default for SubApp {
             plugin_build_depth: 0,
             plugins_state: PluginsState::Adding,
             update_schedule: None,
-            extract: None,
+            extract: SyncCell::new(None),
         }
     }
 }
@@ -154,7 +157,7 @@ impl SubApp {
     /// **Note:** There is no default extract method. Calling `extract` does nothing if
     /// [`set_extract`](Self::set_extract) has not been called.
     pub fn extract(&mut self, world: &mut World) {
-        if let Some(f) = self.extract.as_mut() {
+        if let Some(f) = self.extract.get().as_mut() {
             f(world, &mut self.world);
         }
     }
@@ -166,7 +169,7 @@ impl SubApp {
     where
         F: FnMut(&mut World, &mut World) + Send + 'static,
     {
-        self.extract = Some(Box::new(extract));
+        self.extract.get().replace(Box::new(extract));
         self
     }
 
@@ -196,7 +199,7 @@ impl SubApp {
     /// });
     /// ```
     pub fn take_extract(&mut self) -> Option<ExtractFn> {
-        self.extract.take()
+        self.extract.get().take()
     }
 
     /// See [`App::insert_resource`].
